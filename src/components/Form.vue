@@ -401,6 +401,29 @@ const fetchSelectedRecords = async () => {
   }
 };
 
+// ---------- 下载 ----------
+const generateAndSave = async () => {
+  downloadLoading.value = true;
+  try {
+    const canvas = await generateCanvas();
+    if (!canvas) {
+      ElMessage.warning('无法生成图片，请检查是否选中记录且至少有一个字段');
+      return;
+    }
+    const link = document.createElement('a');
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    link.download = `表格数据_${timestamp}.png`;
+    link.href = canvas.toDataURL();
+    link.click();
+    ElMessage.success('成功生成表格长图！');
+  } catch (error) {
+    console.error('生成长图失败:', error);
+    ElMessage.error('生成失败，请查看控制台');
+  } finally {
+    downloadLoading.value = false;
+  }
+};
+
 const generateCanvas = async () => {
   if (displayedFields.value.length === 0) return null;
   const records = await fetchSelectedRecords();
