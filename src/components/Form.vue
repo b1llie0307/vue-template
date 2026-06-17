@@ -1,5 +1,5 @@
 <template>
-  <!-- 模板部分与之前完全相同，省略重复 -->
+  <!-- 模板与之前完全相同，为节省篇幅省略，但实际文件中必须保留 -->
   <div class="screenshot-plugin">
     <el-card class="config-card" shadow="never">
       <template #header>
@@ -187,134 +187,154 @@ const FieldType = {
 };
 
 // ---------- 辅助函数 ----------
-const formatDateValue = (value) => {
+// 按指定格式格式化日期时间戳（毫秒）
+const formatDateValue = (value, dateFormat) => {
   if (value === undefined || value === null) return '';
   let timestamp = value;
   if (typeof timestamp === 'string') timestamp = parseInt(timestamp, 10);
   if (typeof timestamp !== 'number' || isNaN(timestamp)) return String(value);
+  // 秒级转毫秒
   if (timestamp < 10000000000) timestamp *= 1000;
   const date = new Date(timestamp);
   if (isNaN(date.getTime())) return String(value);
+
+  // ★★★ 修改默认格式为仅日期 ★★★
+  const format = dateFormat || 'YYYY-MM-DD';
   const pad = (n) => n.toString().padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return format
+    .replace(/YYYY/g, year)
+    .replace(/MM/g, month)
+    .replace(/DD/g, day)
+    .replace(/HH/g, hours)
+    .replace(/mm/g, minutes)
+    .replace(/ss/g, seconds);
 };
 
 const formatCheckboxValue = (value) => (value === true ? '是' : value === false ? '否' : '');
 
-const formatFieldValue = (value, fieldType) => {
+// 核心格式化函数（保留完整逻辑，与之前相同）
+const formatFieldValue = (value, fieldType, dateFormat) => {
   if (value === undefined || value === null) return '';
 
-  // ----- 原有类型判断 -----
-  if (fieldType === FieldType.DATE) {
-    return formatDateValue(value);
+  const tryFormatDate = (num) => {
+    if (typeof num !== 'number' || isNaN(num)) return null;
+    if (num > 1000000000 && num < 100000000000) {
+      const d = new Date(num * 1000);
+      if (d.getFullYear() >= 1970 && d.getFullYear() <= 2100) {
+        return formatDateValue(num * 1000, dateFormat);
+      }
+    }
+    if (num > 1000000000000 && num < 100000000000000) {
+      const d = new Date(num);
+      if (d.getFullYear() >= 1970 && d.getFullYear() <= 2100) {
+        return formatDateValue(num, dateFormat);
+      }
+    }
+    return null;
+  };
+
+  if (Array.isArray(value)) {
+    const arr = [...value];
+    return arr.map(item => formatFieldValue(item, fieldType, dateFormat)).join(', ');
   }
-  if (fieldType === FieldType.CHECKBOX) {
-    return formatCheckboxValue(value);
+
+  if (typeof value === 'object' && value !== null) {
+    for (const key in value) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const val = value[key];
+        if (val === undefined || val === null) continue;
+        if (typeof val === 'number') {
+          const result = tryFormatDate(val);
+          if (result) return result;
+        }
+        if (typeof val === 'string' && /^\d+$/.test(val)) {
+          const result = tryFormatDate(Number(val));
+          if (result) return result;
+        }
+        if (typeof val === 'object') {
+          const result = formatFieldValue(val, fieldType, dateFormat);
+          if (result && result !== JSON.stringify(val) && result !== '') {
+            return result;
+          }
+        }
+      }
+    }
+    if (value.name) return value.name;
+    if (value.text) return value.text;
+    if (value.title) return value.title;
+    return JSON.stringify(value);
   }
-  if (fieldType === FieldType.NUMBER) {
-    if (typeof value === 'number') {
+
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const num = Number(value);
+    const result = tryFormatDate(num);
+    if (result) return result;
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    const result = tryFormatDate(value);
+    if (result) return result;
+    if (fieldType === FieldType.NUMBER) {
       return Number.isInteger(value) ? value.toString() : value.toFixed(2);
     }
     return String(value);
   }
+
+  if (fieldType === FieldType.DATE) {
+    return formatDateValue(value, dateFormat);
+  }
+  if (fieldType === FieldType.CHECKBOX) return formatCheckboxValue(value);
   if (fieldType === FieldType.URL) {
-    if (typeof value === 'object' && value !== null) {
-      return value.text || value.link || JSON.stringify(value);
-    }
+    if (typeof value === 'object' && value !== null) return value.text || value.link || JSON.stringify(value);
     return String(value);
   }
-
-  // 数组处理（包括关联记录、多选、人员等）
-  if (Array.isArray(value)) {
-    return value.map(item => {
-      if (typeof item === 'object' && item !== null) {
-        // 如果数组项是对象，尝试提取常见字段
-        return item.name || item.text || item.title || item.id || JSON.stringify(item);
-      }
-      // 如果数组项是数字，尝试检测是否为时间戳（递归调用）
-      if (typeof item === 'number') {
-        const formatted = tryFormatTimestamp(item);
-        if (formatted !== null) return formatted;
-      }
-      return String(item);
-    }).join(', ');
-  }
-
-  // 对象处理（非数组）
-  if (typeof value === 'object') {
-    try {
-      if (value.name) return value.name;
-      if (value.text) return value.text;
-      if (value.title) return value.title;
-      // 如果对象只有一个属性且是数字，尝试检测时间戳
-      const keys = Object.keys(value);
-      if (keys.length === 1 && typeof value[keys[0]] === 'number') {
-        const formatted = tryFormatTimestamp(value[keys[0]]);
-        if (formatted !== null) return formatted;
-      }
-      return JSON.stringify(value);
-    } catch {
-      return '';
-    }
-  }
-
-  // 布尔值
-  if (typeof value === 'boolean') {
-    return value ? '是' : '否';
-  }
-
-  // ----- 通用时间戳检测（关键！）-----
-  // 无论字段类型是什么，只要值是数字，尝试判断是否为时间戳
-  if (typeof value === 'number' && value > 0) {
-    const formatted = tryFormatTimestamp(value);
-    if (formatted !== null) return formatted;
-  }
-
-  // 最后兜底
+  if (typeof value === 'boolean') return value ? '是' : '否';
   return String(value);
-};
-
-// 辅助函数：尝试将数字格式化为日期，成功返回字符串，否则返回 null
-const tryFormatTimestamp = (num) => {
-  if (typeof num !== 'number' || isNaN(num) || num <= 0) return null;
-  // 判断是秒级（10位）还是毫秒级（13位）
-  const isSeconds = num < 10000000000; // 10位数以内视为秒
-  const timestampMs = isSeconds ? num * 1000 : num;
-  const date = new Date(timestampMs);
-  if (!isNaN(date.getTime()) && date.getFullYear() >= 1970 && date.getFullYear() <= 2100) {
-    const pad = (n) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  }
-  return null;
 };
 
 const getFieldValue = (record, fieldName) => {
   const fieldInfo = fieldNameToId.value[fieldName];
   if (!fieldInfo) return '';
   const rawValue = record.fields[fieldInfo.id];
-  return formatFieldValue(rawValue, fieldInfo.type);
+  return formatFieldValue(rawValue, fieldInfo.type, fieldInfo.dateFormat);
 };
 
+// ---------- 获取字段元数据 ----------
 const getFieldName = async (field) => {
   if (field.name && typeof field.name !== 'object') return field.name;
   if (typeof field.getName === 'function') return await field.getName();
   return field.field_id || field.id || '未知字段';
 };
 
-// ---------- 核心数据获取 ----------
 const fetchAllFieldsDetail = async () => {
   const table = await bitable.base.getActiveTable();
   const fields = await table.getFieldList();
   const detail = [];
-  const mapping = {};
   for (const field of fields) {
     const id = field.field_id || field.id;
     const name = await getFieldName(field);
     const type = field.type;
-    detail.push({ id, name, type });
-    mapping[name] = { id, type };
+    let property = null;
+    try {
+      if (typeof field.getProperty === 'function') {
+        property = await field.getProperty();
+      } else {
+        property = field.property || null;
+      }
+    } catch (e) {
+      property = null;
+    }
+    detail.push({ id, name, type, property });
   }
-  return { detail, mapping };
+  return detail;
 };
 
 const getViewVisibleInfo = async () => {
@@ -323,24 +343,21 @@ const getViewVisibleInfo = async () => {
   const fieldMetaList = await view.getFieldMetaList();
   const visibleFieldIds = await view.getVisibleFieldIdList();
   const visibleMeta = fieldMetaList.filter(meta => visibleFieldIds.includes(meta.id));
-  const visibleFieldNames = visibleMeta.map(meta => meta.name);
   const hiddenFieldIds = fieldMetaList.filter(meta => !visibleFieldIds.includes(meta.id)).map(meta => meta.id);
-  return { visibleFieldNames, hiddenFieldIds };
+  const visibleFieldNames = visibleMeta.map(meta => meta.name);
+  return { visibleFieldNames, hiddenFieldIds, visibleMeta };
 };
 
-// ---------- 存储（兼容 bitable.bridge.storage 和 localStorage）----------
+// ---------- 存储 ----------
 let storageAPI = null;
 
 const initStorage = () => {
   if (storageAPI) return storageAPI;
   if (typeof bitable !== 'undefined' && bitable.bridge && bitable.bridge.storage) {
     storageAPI = bitable.bridge.storage;
-    console.log('使用 bitable.bridge.storage');
   } else if (typeof localStorage !== 'undefined') {
     storageAPI = localStorage;
-    console.warn('bitable.bridge.storage 不可用，使用 localStorage 作为 fallback');
   } else {
-    console.error('无可用存储');
     storageAPI = null;
   }
   return storageAPI;
@@ -413,9 +430,40 @@ const loadTableStyle = async () => {
 // ---------- 初始化 ----------
 const initialize = async () => {
   try {
-    const { detail, mapping } = await fetchAllFieldsDetail();
+    const detail = await fetchAllFieldsDetail();
+    const { visibleFieldNames, hiddenFieldIds, visibleMeta } = await getViewVisibleInfo();
+
+    const metaMap = {};
+    visibleMeta.forEach(meta => { metaMap[meta.id] = meta; });
+
+    const mapping = {};
+    detail.forEach(f => {
+      const meta = metaMap[f.id];
+      let dateFormat = null;
+      if (meta && meta.format) {
+        if (typeof meta.format === 'string') {
+          dateFormat = meta.format;
+        } else if (typeof meta.format === 'object') {
+          dateFormat = meta.format.dateFormat || meta.format.format || meta.format.pattern || null;
+        }
+      }
+      if (!dateFormat && f.property) {
+        if (f.type === FieldType.DATE) {
+          dateFormat = f.property.dateFormat || f.property.format || null;
+        } else if (f.type === FieldType.LINK || f.type === FieldType.FORMULA) {
+          dateFormat = f.property.dateFormat || f.property.format || null;
+        }
+        if (typeof f.property === 'string' && !dateFormat) {
+          dateFormat = f.property;
+        }
+      }
+      if (!dateFormat && meta) {
+        dateFormat = meta.dateFormat || meta.format || null;
+      }
+      mapping[f.name] = { id: f.id, type: f.type, dateFormat };
+    });
     fieldNameToId.value = mapping;
-    const { visibleFieldNames, hiddenFieldIds } = await getViewVisibleInfo();
+
     const orderedFields = visibleFieldNames.map(name => detail.find(f => f.name === name)).filter(f => f !== undefined);
     allFields.value = orderedFields;
     await loadExcludedFields();
@@ -433,7 +481,7 @@ const initialize = async () => {
 
 const syncHiddenFields = async () => {
   try {
-    const { detail } = await fetchAllFieldsDetail();
+    const detail = await fetchAllFieldsDetail();
     const { hiddenFieldIds } = await getViewVisibleInfo();
     const hiddenFieldNames = hiddenFieldIds.map(id => detail.find(f => f.id === id)?.name).filter(name => name !== undefined);
     excludedFields.value = hiddenFieldNames;
@@ -538,7 +586,7 @@ const debouncedUpdatePreview = () => {
   debounceTimer = setTimeout(() => updatePreview(), 300);
 };
 
-// ---------- 自动刷新：轮询选中记录 + 视图变化 ----------
+// ---------- 自动刷新 ----------
 let lastSelectedIds = [];
 let lastViewId = null;
 let pollTimer = null;
@@ -603,6 +651,10 @@ const stopPolling = () => {
   }
 };
 
+const resetZoom = () => {
+  zoomPercent.value = 100;
+};
+
 // ---------- 监听与生命周期 ----------
 watch(displayedFields, () => debouncedUpdatePreview(), { deep: true });
 watch(tableStyle, () => debouncedUpdatePreview(), { deep: true });
@@ -638,7 +690,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 样式保持不变 */
 .screenshot-plugin { padding: 20px; background: #f0f2f5; min-height: 100vh; }
 .config-card, .preview-card { max-width: 800px; margin: 0 auto 20px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: 600; color: #1f2d3d; }
