@@ -203,42 +203,89 @@ const formatCheckboxValue = (value) => (value === true ? '是' : value === false
 
 const formatFieldValue = (value, fieldType) => {
   if (value === undefined || value === null) return '';
-  if (fieldType === FieldType.DATE) return formatDateValue(value);
-  if (fieldType === FieldType.CHECKBOX) return formatCheckboxValue(value);
+
+  // ----- 原有类型判断 -----
+  if (fieldType === FieldType.DATE) {
+    return formatDateValue(value);
+  }
+  if (fieldType === FieldType.CHECKBOX) {
+    return formatCheckboxValue(value);
+  }
   if (fieldType === FieldType.NUMBER) {
-    if (typeof value === 'number') return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+    if (typeof value === 'number') {
+      return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+    }
     return String(value);
   }
   if (fieldType === FieldType.URL) {
-    if (typeof value === 'object' && value !== null) return value.text || value.link || JSON.stringify(value);
+    if (typeof value === 'object' && value !== null) {
+      return value.text || value.link || JSON.stringify(value);
+    }
     return String(value);
   }
+
+  // 数组处理（包括关联记录、多选、人员等）
   if (Array.isArray(value)) {
     return value.map(item => {
-      if (typeof item === 'object' && item !== null) return item.name || item.text || item.title || item.id || JSON.stringify(item);
+      if (typeof item === 'object' && item !== null) {
+        // 如果数组项是对象，尝试提取常见字段
+        return item.name || item.text || item.title || item.id || JSON.stringify(item);
+      }
+      // 如果数组项是数字，尝试检测是否为时间戳（递归调用）
+      if (typeof item === 'number') {
+        const formatted = tryFormatTimestamp(item);
+        if (formatted !== null) return formatted;
+      }
       return String(item);
     }).join(', ');
   }
+
+  // 对象处理（非数组）
   if (typeof value === 'object') {
     try {
       if (value.name) return value.name;
       if (value.text) return value.text;
       if (value.title) return value.title;
+      // 如果对象只有一个属性且是数字，尝试检测时间戳
+      const keys = Object.keys(value);
+      if (keys.length === 1 && typeof value[keys[0]] === 'number') {
+        const formatted = tryFormatTimestamp(value[keys[0]]);
+        if (formatted !== null) return formatted;
+      }
       return JSON.stringify(value);
-    } catch { return ''; }
-  }
-  if (typeof value === 'boolean') return value ? '是' : '否';
-  if (typeof value === 'number' && value > 0) {
-    // 判断是否为秒级（10位）或毫秒级（13位）
-    const isSeconds = value < 10000000000; // 10位数以内视为秒
-    const timestampMs = isSeconds ? value * 1000 : value;
-    const date = new Date(timestampMs);
-    if (!isNaN(date.getTime()) && date.getFullYear() >= 1970 && date.getFullYear() <= 2100) {
-      const pad = (n) => n.toString().padStart(2, '0');
-      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    } catch {
+      return '';
     }
   }
+
+  // 布尔值
+  if (typeof value === 'boolean') {
+    return value ? '是' : '否';
+  }
+
+  // ----- 通用时间戳检测（关键！）-----
+  // 无论字段类型是什么，只要值是数字，尝试判断是否为时间戳
+  if (typeof value === 'number' && value > 0) {
+    const formatted = tryFormatTimestamp(value);
+    if (formatted !== null) return formatted;
+  }
+
+  // 最后兜底
   return String(value);
+};
+
+// 辅助函数：尝试将数字格式化为日期，成功返回字符串，否则返回 null
+const tryFormatTimestamp = (num) => {
+  if (typeof num !== 'number' || isNaN(num) || num <= 0) return null;
+  // 判断是秒级（10位）还是毫秒级（13位）
+  const isSeconds = num < 10000000000; // 10位数以内视为秒
+  const timestampMs = isSeconds ? num * 1000 : num;
+  const date = new Date(timestampMs);
+  if (!isNaN(date.getTime()) && date.getFullYear() >= 1970 && date.getFullYear() <= 2100) {
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+  return null;
 };
 
 const getFieldValue = (record, fieldName) => {
